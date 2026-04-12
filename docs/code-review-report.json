@@ -1,0 +1,231 @@
+{
+  "report_title": "AI Code Review — Order Service",
+  "review_date": "2026-04-12",
+  "reviewer": "AI Governance Review Engine",
+  "service": "order-service",
+  "file_reviewed": "com.shopping.order.service.OrderService.java",
+  "overall_risk_level": "MEDIUM-HIGH",
+
+  "security_issues": [
+    {
+      "id": "SEC-001",
+      "severity": "HIGH",
+      "category": "Secrets Management",
+      "location": "OrderService.java:initiatePayment()",
+      "finding": "Service URLs are hardcoded (e.g., 'http://payment-service:8084/api/v1/payments'). While not a secret, these should be externalized to configuration.",
+      "recommendation": "Move service URLs to application.yml or environment variables. Use Spring Cloud Config or Kubernetes ConfigMaps.",
+      "cwe": "CWE-798: Use of Hard-coded Credentials (adjacent risk)"
+    },
+    {
+      "id": "SEC-002",
+      "severity": "MEDIUM",
+      "category": "Input Validation",
+      "location": "OrderService.java:createOrder() - cart item mapping",
+      "finding": "Cart item fields (productId, price, quantity) are cast from Map<String, Object> without null checks. Malformed cart data could cause NullPointerException.",
+      "recommendation": "Add null checks before casting. Validate each field. Consider using typed DTOs instead of raw Maps."
+    },
+    {
+      "id": "SEC-003",
+      "severity": "MEDIUM",
+      "category": "Error Information Leak",
+      "location": "OrderService.java:fetchCart()",
+      "finding": "RuntimeException wraps the original exception which may contain internal service details. This could leak sensitive information in error responses.",
+      "recommendation": "Wrap in custom OrderCreationException without exposing inner exception message to callers."
+    },
+    {
+      "id": "SEC-004",
+      "severity": "LOW",
+      "category": "API Security",
+      "location": "OrderService.java:all REST calls",
+      "finding": "Inter-service REST calls do not include authentication headers. In production, services should validate tokens even for internal calls.",
+      "recommendation": "Implement service-to-service authentication (mTLS or internal JWT tokens)."
+    }
+  ],
+
+  "missing_null_checks": [
+    {
+      "id": "NULL-001",
+      "location": "OrderService.java:createOrder() line: casting cartItems",
+      "code": "List<Map<String, Object>> cartItems = (List<Map<String, Object>>) cart.get(\"items\");",
+      "issue": "cart.get('items') could return null if cart structure is malformed",
+      "fix": "Add: if (cart == null || !cart.containsKey('items')) throw new IllegalStateException('Invalid cart data')"
+    },
+    {
+      "id": "NULL-002",
+      "location": "OrderService.java:createOrder() line: discount mapping",
+      "code": "BigDecimal discount = cart.get(\"discount\") != null ? new BigDecimal(...) : BigDecimal.ZERO;",
+      "issue": "cart.get('discount').toString() could fail if value is not a valid number",
+      "fix": "Wrap in try-catch or use NumberFormatException-safe parsing"
+    },
+    {
+      "id": "NULL-003",
+      "location": "OrderService.java:validateProductStock()",
+      "code": "Map<String, Object> product = restTemplate.getForObject(url, Map.class);",
+      "issue": "Product could be null but the null check only logs warning for non-IllegalStateException",
+      "fix": "Add explicit null check: if (product == null) throw new ProductNotFoundException(...)"
+    },
+    {
+      "id": "NULL-004",
+      "location": "OrderService.java:restoreInventory()",
+      "code": "order.getItems() iteration without null check",
+      "issue": "If order.getItems() returns null (unlikely but possible with lazy loading issues), NPE",
+      "fix": "Add: if (order.getItems() == null) return;"
+    }
+  ],
+
+  "complexity_score": "17 (Cyclomatic Complexity for createOrder method)",
+  "complexity_analysis": {
+    "method": "createOrder",
+    "cyclomatic_complexity": 17,
+    "cognitive_complexity": 22,
+    "threshold": 10,
+    "status": "EXCEEDS_THRESHOLD",
+    "breakdown": {
+      "null_checks": 3,
+      "if_else_branches": 4,
+      "for_loops": 2,
+      "try_catch_blocks": 2,
+      "lambda_expressions": 3,
+      "method_calls_to_external_services": 3
+    },
+    "recommendation": "Refactor createOrder into smaller methods: validateCart(), buildOrderItems(), calculateTotals(), processPayment(). Target CC < 10 per method."
+  },
+
+  "refactor_suggestions": [
+    {
+      "id": "REF-001",
+      "priority": "HIGH",
+      "title": "Extract Order Creation Steps",
+      "current": "createOrder() handles cart fetch, validation, item mapping, total calculation, payment, and cart clearing in one method (170+ lines, CC=17)",
+      "proposed": "Split into: fetchAndValidateCart(), mapCartToOrderItems(), calculateOrderTotals(), initiateAndTrackPayment(), postOrderCleanup()",
+      "benefit": "Reduces complexity, improves testability, enables independent retry logic per step"
+    },
+    {
+      "id": "REF-002",
+      "priority": "HIGH",
+      "title": "Replace Raw Maps with Typed DTOs",
+      "current": "Inter-service responses are deserialized as Map<String, Object> with unsafe casts",
+      "proposed": "Create CartResponse, ProductResponse DTOs and use RestTemplate.getForObject(url, CartResponse.class)",
+      "benefit": "Type safety, compile-time checks, eliminates ClassCastException risks"
+    },
+    {
+      "id": "REF-003",
+      "priority": "MEDIUM",
+      "title": "Implement Saga Pattern for Distributed Transaction",
+      "current": "Order creation, payment, and inventory update are not atomically linked. Payment failure leaves order in inconsistent state.",
+      "proposed": "Implement choreography-based saga: Order → Payment → Inventory. Each step has compensating transaction.",
+      "benefit": "Data consistency across services, automatic rollback on failure"
+    },
+    {
+      "id": "REF-004",
+      "priority": "MEDIUM",
+      "title": "Add Circuit Breaker Pattern",
+      "current": "REST calls to services have simple try-catch with no circuit breaker. Failed services cause cascading timeouts.",
+      "proposed": "Add Resilience4j CircuitBreaker around inter-service calls with fallback responses",
+      "benefit": "Prevents cascading failures, provides graceful degradation"
+    },
+    {
+      "id": "REF-005",
+      "priority": "MEDIUM",
+      "title": "Externalize Tax Rate Configuration",
+      "current": "Tax rate is hardcoded: subtotal.multiply(new BigDecimal('0.08'))",
+      "proposed": "Move to application.yml: order.tax-rate: 0.08. Inject via @Value or @ConfigurationProperties",
+      "benefit": "Configurable per region, no code change needed for tax updates"
+    },
+    {
+      "id": "REF-006",
+      "priority": "LOW",
+      "title": "Add Idempotency Key to Order Creation",
+      "current": "Duplicate order requests could create multiple orders",
+      "proposed": "Accept idempotency-key header, check if order with same key exists before creating",
+      "benefit": "Prevents duplicate orders from retry scenarios"
+    }
+  ],
+
+  "fake_api_check": {
+    "status": "PASS",
+    "findings": [
+      {
+        "api": "http://cart-service:8082/api/v1/cart",
+        "exists_in_openapi": true,
+        "validated": true
+      },
+      {
+        "api": "http://product-service:8081/api/v1/products/{id}",
+        "exists_in_openapi": true,
+        "validated": true
+      },
+      {
+        "api": "http://payment-service:8084/api/v1/payments",
+        "exists_in_openapi": true,
+        "validated": true
+      },
+      {
+        "api": "http://cart-service:8082/api/v1/cart/clear",
+        "exists_in_openapi": true,
+        "validated": true
+      }
+    ],
+    "hallucinated_apis": []
+  },
+
+  "license_risks": {
+    "status": "LOW_RISK",
+    "findings": [
+      {
+        "dependency": "spring-boot-starter-web",
+        "license": "Apache-2.0",
+        "risk": "LOW — permissive, commercial-friendly"
+      },
+      {
+        "dependency": "spring-data-jpa",
+        "license": "Apache-2.0",
+        "risk": "LOW"
+      },
+      {
+        "dependency": "postgresql-driver",
+        "license": "BSD-2-Clause",
+        "risk": "LOW — permissive"
+      }
+    ]
+  },
+
+  "sonarqube_comparison": {
+    "bugs": 3,
+    "vulnerabilities": 2,
+    "code_smells": 8,
+    "coverage_estimate": "45% (estimated — no tests for OrderService yet)",
+    "duplicated_lines_percent": "2.1%",
+    "technical_debt": "3h 20min",
+    "maintainability_rating": "C",
+    "reliability_rating": "B",
+    "security_rating": "C",
+    "detailed_issues": [
+      { "type": "Bug", "rule": "java:S2259", "message": "Possible NullPointerException in cart item mapping" },
+      { "type": "Bug", "rule": "java:S2142", "message": "InterruptedException should not be ignored (in retry logic)" },
+      { "type": "Bug", "rule": "java:S1166", "message": "Exception cause should always be preserved" },
+      { "type": "Vulnerability", "rule": "java:S5131", "message": "User input is used in URL construction without sanitization" },
+      { "type": "Vulnerability", "rule": "java:S4507", "message": "Log statements contain user IDs — potential PII leak in logs" },
+      { "type": "Code Smell", "rule": "java:S3776", "message": "Cognitive complexity of createOrder is 22 (threshold 15)" },
+      { "type": "Code Smell", "rule": "java:S1135", "message": "@SuppressWarnings('unchecked') used 3 times — indicates design issue" },
+      { "type": "Code Smell", "rule": "java:S106", "message": "Consider using dedicated DTO classes instead of Map<String, Object>" }
+    ]
+  },
+
+  "summary": {
+    "critical_actions": [
+      "Refactor createOrder() to reduce cyclomatic complexity below 10",
+      "Replace Map<String, Object> with typed DTOs for inter-service communication",
+      "Add null checks for all deserialized external data",
+      "Externalize service URLs to configuration",
+      "Implement circuit breaker for inter-service REST calls"
+    ],
+    "positive_aspects": [
+      "Proper use of @Transactional annotations",
+      "Status transition validation prevents invalid state changes",
+      "Null argument validation at method entry points",
+      "Structured logging with trace context",
+      "No hallucinated APIs — all endpoints match OpenAPI specs"
+    ]
+  }
+}

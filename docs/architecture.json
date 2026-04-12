@@ -1,0 +1,274 @@
+{
+  "system": "Online Shopping Platform",
+  "architecture_style": "Microservices",
+  "communication": "REST APIs (HTTP/HTTPS)",
+  "target_concurrency": 10000,
+
+  "services": [
+    {
+      "name": "product-service",
+      "port": 8081,
+      "responsibilities": [
+        "Manage product catalog (CRUD)",
+        "Product search and filtering",
+        "Inventory tracking",
+        "Category management"
+      ],
+      "apis": [
+        { "method": "GET", "path": "/api/v1/products", "description": "List all products with pagination and filtering" },
+        { "method": "GET", "path": "/api/v1/products/{id}", "description": "Get product details by ID" },
+        { "method": "POST", "path": "/api/v1/products", "description": "Create a new product" },
+        { "method": "PUT", "path": "/api/v1/products/{id}", "description": "Update an existing product" },
+        { "method": "DELETE", "path": "/api/v1/products/{id}", "description": "Delete a product (soft delete)" },
+        { "method": "GET", "path": "/api/v1/products/categories", "description": "List all categories" }
+      ],
+      "database": {
+        "type": "PostgreSQL",
+        "name": "product_db",
+        "tables": ["products", "categories", "inventory"]
+      },
+      "scaling": {
+        "strategy": "Horizontal Pod Autoscaler",
+        "min_replicas": 3,
+        "max_replicas": 10,
+        "target_cpu_utilization": 70
+      }
+    },
+    {
+      "name": "cart-service",
+      "port": 8082,
+      "responsibilities": [
+        "Manage user shopping carts",
+        "Cart item CRUD operations",
+        "Price calculation",
+        "Coupon/discount application"
+      ],
+      "apis": [
+        { "method": "GET", "path": "/api/v1/cart", "description": "Get current user cart" },
+        { "method": "POST", "path": "/api/v1/cart/add", "description": "Add item to cart" },
+        { "method": "PUT", "path": "/api/v1/cart/update", "description": "Update cart item quantity" },
+        { "method": "DELETE", "path": "/api/v1/cart/remove", "description": "Remove item from cart" },
+        { "method": "POST", "path": "/api/v1/cart/apply-coupon", "description": "Apply coupon to cart" },
+        { "method": "DELETE", "path": "/api/v1/cart/clear", "description": "Clear entire cart" }
+      ],
+      "database": {
+        "type": "Redis",
+        "name": "cart_cache",
+        "rationale": "Session-based data; fast reads/writes; TTL-based expiry"
+      },
+      "scaling": {
+        "strategy": "Horizontal Pod Autoscaler",
+        "min_replicas": 3,
+        "max_replicas": 12,
+        "target_cpu_utilization": 65
+      }
+    },
+    {
+      "name": "order-service",
+      "port": 8083,
+      "responsibilities": [
+        "Order creation and management",
+        "Order status tracking",
+        "Order history",
+        "Integration with payment and inventory"
+      ],
+      "apis": [
+        { "method": "POST", "path": "/api/v1/orders", "description": "Create a new order" },
+        { "method": "GET", "path": "/api/v1/orders/{id}", "description": "Get order details" },
+        { "method": "GET", "path": "/api/v1/orders", "description": "Get user order history" },
+        { "method": "PUT", "path": "/api/v1/orders/{id}/status", "description": "Update order status" },
+        { "method": "POST", "path": "/api/v1/orders/{id}/cancel", "description": "Cancel an order" }
+      ],
+      "database": {
+        "type": "PostgreSQL",
+        "name": "order_db",
+        "tables": ["orders", "order_items", "order_status_history"]
+      },
+      "scaling": {
+        "strategy": "Horizontal Pod Autoscaler",
+        "min_replicas": 3,
+        "max_replicas": 15,
+        "target_cpu_utilization": 60
+      }
+    },
+    {
+      "name": "payment-service",
+      "port": 8084,
+      "responsibilities": [
+        "Payment processing",
+        "Payment status tracking",
+        "Refund management",
+        "Payment method management"
+      ],
+      "apis": [
+        { "method": "POST", "path": "/api/v1/payments", "description": "Initiate a payment" },
+        { "method": "GET", "path": "/api/v1/payments/{id}", "description": "Get payment status" },
+        { "method": "POST", "path": "/api/v1/payments/{id}/refund", "description": "Process refund" },
+        { "method": "GET", "path": "/api/v1/payments/methods", "description": "List payment methods" }
+      ],
+      "database": {
+        "type": "PostgreSQL",
+        "name": "payment_db",
+        "tables": ["payments", "refunds", "payment_methods"]
+      },
+      "scaling": {
+        "strategy": "Horizontal Pod Autoscaler",
+        "min_replicas": 2,
+        "max_replicas": 8,
+        "target_cpu_utilization": 50,
+        "note": "Conservative scaling — payment failures are costlier than latency"
+      }
+    },
+    {
+      "name": "user-service",
+      "port": 8085,
+      "responsibilities": [
+        "User registration and authentication",
+        "Profile management",
+        "Address management",
+        "JWT token issuance and validation"
+      ],
+      "apis": [
+        { "method": "POST", "path": "/api/v1/users/register", "description": "Register new user" },
+        { "method": "POST", "path": "/api/v1/users/login", "description": "Authenticate user" },
+        { "method": "GET", "path": "/api/v1/users/profile", "description": "Get user profile" },
+        { "method": "PUT", "path": "/api/v1/users/profile", "description": "Update user profile" },
+        { "method": "POST", "path": "/api/v1/users/addresses", "description": "Add shipping address" },
+        { "method": "GET", "path": "/api/v1/users/addresses", "description": "List user addresses" }
+      ],
+      "database": {
+        "type": "PostgreSQL",
+        "name": "user_db",
+        "tables": ["users", "addresses", "refresh_tokens"]
+      },
+      "scaling": {
+        "strategy": "Horizontal Pod Autoscaler",
+        "min_replicas": 2,
+        "max_replicas": 6,
+        "target_cpu_utilization": 70
+      }
+    }
+  ],
+
+  "infrastructure": {
+    "api_gateway": {
+      "technology": "Spring Cloud Gateway",
+      "responsibilities": ["Rate limiting", "JWT validation", "Request routing", "CORS management"]
+    },
+    "service_discovery": {
+      "technology": "Eureka / Consul",
+      "rationale": "Auto-registration and health-check for dynamic scaling"
+    },
+    "load_balancer": {
+      "technology": "Nginx / AWS ALB",
+      "strategy": "Round-robin with health checks"
+    },
+    "monitoring": {
+      "metrics": "Prometheus + Grafana",
+      "logging": "ELK Stack (Elasticsearch, Logstash, Kibana)",
+      "tracing": "Jaeger / Zipkin"
+    },
+    "containerization": {
+      "runtime": "Docker",
+      "orchestration": "Kubernetes"
+    }
+  },
+
+  "databases": [
+    { "service": "product-service", "type": "PostgreSQL", "name": "product_db", "rationale": "Relational data with complex queries" },
+    { "service": "cart-service", "type": "Redis", "name": "cart_cache", "rationale": "Ephemeral session data with fast access" },
+    { "service": "order-service", "type": "PostgreSQL", "name": "order_db", "rationale": "Transactional consistency for orders" },
+    { "service": "payment-service", "type": "PostgreSQL", "name": "payment_db", "rationale": "ACID compliance for financial data" },
+    { "service": "user-service", "type": "PostgreSQL", "name": "user_db", "rationale": "Structured user data with auth" }
+  ],
+
+  "risks": [
+    {
+      "category": "Scalability",
+      "risk": "Database connection pool exhaustion under 10K concurrent users",
+      "severity": "HIGH",
+      "mitigation": "Use connection pooling (HikariCP), read replicas, and Redis caching layer"
+    },
+    {
+      "category": "Scalability",
+      "risk": "Cart service hotspot during flash sales",
+      "severity": "HIGH",
+      "mitigation": "Redis clustering, rate limiting at gateway, circuit breaker pattern"
+    },
+    {
+      "category": "Security",
+      "risk": "JWT token theft enabling session hijacking",
+      "severity": "CRITICAL",
+      "mitigation": "Short-lived access tokens (15 min), refresh token rotation, token blacklisting"
+    },
+    {
+      "category": "Security",
+      "risk": "SQL injection in product search",
+      "severity": "HIGH",
+      "mitigation": "Parameterized queries via JPA, input sanitization, WAF rules"
+    },
+    {
+      "category": "Security",
+      "risk": "Payment data exposure",
+      "severity": "CRITICAL",
+      "mitigation": "PCI-DSS compliance, never store raw card data, tokenize via payment gateway"
+    },
+    {
+      "category": "AI Hallucination",
+      "risk": "AI-generated code references non-existent APIs or libraries",
+      "severity": "MEDIUM",
+      "mitigation": "Contract-first development with OpenAPI validation, integration tests, manual review"
+    },
+    {
+      "category": "AI Hallucination",
+      "risk": "AI generates incorrect business logic for payment calculations",
+      "severity": "HIGH",
+      "mitigation": "No AI in payment logic path; deterministic calculation with unit test coverage > 95%"
+    },
+    {
+      "category": "Data Integrity",
+      "risk": "Distributed transaction failure across services",
+      "severity": "HIGH",
+      "mitigation": "Saga pattern with compensating transactions, idempotency keys"
+    },
+    {
+      "category": "Availability",
+      "risk": "Single point of failure in API Gateway",
+      "severity": "HIGH",
+      "mitigation": "Multiple gateway instances behind load balancer, health checks, failover"
+    },
+    {
+      "category": "Operational",
+      "risk": "Service version mismatch during rolling deploys",
+      "severity": "MEDIUM",
+      "mitigation": "API versioning (v1, v2), backward compatibility checks, canary deployments"
+    }
+  ],
+
+  "ai_strategy": {
+    "token_limits": {
+      "code_generation": "4096 tokens per API endpoint generation",
+      "review": "8192 tokens for comprehensive code review",
+      "test_generation": "4096 tokens per test class",
+      "rationale": "Balance between completeness and cost; larger limits for review to capture full context"
+    },
+    "temperature_strategy": {
+      "code_generation": {
+        "temperature": 0.2,
+        "rationale": "Low temperature for deterministic, predictable code output"
+      },
+      "architecture_design": {
+        "temperature": 0.5,
+        "rationale": "Moderate creativity for exploring design alternatives"
+      },
+      "test_generation": {
+        "temperature": 0.3,
+        "rationale": "Slightly higher than code gen to explore edge cases"
+      },
+      "documentation": {
+        "temperature": 0.4,
+        "rationale": "Balance between clarity and comprehensive coverage"
+      }
+    }
+  }
+}

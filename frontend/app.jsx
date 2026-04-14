@@ -282,6 +282,589 @@ function useFetchProducts() {
 }
 
 // ================================================================
+// Shop Assistant: Built-in Knowledge Chatbot
+// ================================================================
+const SHOP_ASSISTANT_DEFAULT_SUGGESTIONS = [
+  'What does this app do?',
+  'Which services exist?',
+  'What coupon codes work?',
+  'Is the backend fully runnable?'
+];
+
+const SHOP_ASSISTANT_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'about', 'all', 'am', 'any', 'are', 'at', 'be', 'can', 'do',
+  'does', 'for', 'from', 'give', 'help', 'how', 'i', 'in', 'is', 'it', 'me', 'my',
+  'of', 'on', 'or', 'please', 'show', 'tell', 'that', 'the', 'this', 'to', 'what',
+  'when', 'where', 'which', 'with', 'you'
+]);
+
+const SHOP_ASSISTANT_PAGE_LABELS = {
+  products: 'Products',
+  cart: 'Cart',
+  checkout: 'Checkout'
+};
+
+const SHOP_ASSISTANT_KNOWLEDGE_BASE = [
+  {
+    id: 'overview',
+    keywords: ['what does this app do', 'what is this application', 'overview', 'project', 'system', 'shopnova'],
+    answer: 'ShopNova is a demo online shopping system with a React storefront and a microservices-style backend. The user flow centers on Products, Cart, and Checkout, while the backend models product, cart, order, payment, and user services.',
+    suggestions: ['What pages are available?', 'Which services exist?', 'Is the backend fully runnable?']
+  },
+  {
+    id: 'services',
+    keywords: ['services', 'microservices', 'backend services', 'architecture', 'service list'],
+    answer: 'The intended backend is split into five services: product-service, cart-service, order-service, payment-service, and user-service. An API gateway sits in front of them for routing.',
+    suggestions: ['What ports are used?', 'Which databases are used?', 'What APIs exist?']
+  },
+  {
+    id: 'tech-stack',
+    keywords: ['tech stack', 'technology', 'react', 'spring boot', 'postgres', 'redis', 'docker'],
+    answer: 'The project combines a React frontend with a Spring Boot microservices architecture. PostgreSQL is intended for product, order, payment, and user data, while Redis is intended for cart state.',
+    suggestions: ['Which services exist?', 'How do I run the app?', 'What APIs exist?']
+  },
+  {
+    id: 'ports',
+    keywords: ['ports', 'port numbers', '8080', '8081', '8082', '8083', '8084', '8085'],
+    answer: 'The API gateway is configured for port 8080. The individual services are configured on 8081 for products, 8082 for cart, 8083 for orders, 8084 for payments, and 8085 for users.',
+    suggestions: ['Which services exist?', 'How do I run the app?', 'Is the backend fully runnable?']
+  },
+  {
+    id: 'frontend-pages',
+    keywords: ['pages', 'frontend pages', 'screens', 'ui', 'products page', 'cart page', 'checkout page'],
+    answer: 'The storefront currently has three main pages: Products for browsing, Cart for quantity changes and coupon application, and Checkout for shipping details plus payment selection.',
+    suggestions: ['How does the product page work?', 'What coupon codes work?', 'How does checkout work?']
+  },
+  {
+    id: 'run-app',
+    keywords: ['run', 'start', 'launch', 'open app', 'how do i run', 'serve frontend'],
+    answer: 'The quickest way to use the demo is to open frontend/index.html or serve the frontend folder locally. The UI can fall back to built-in mock products if the backend API is unavailable.',
+    suggestions: ['Is the backend fully runnable?', 'What does this app do?', 'How does the chatbot work?']
+  },
+  {
+    id: 'backend-status',
+    keywords: ['fully runnable', 'backend status', 'scaffold', 'not working', 'placeholder', 'dockerfile', 'pom'],
+    answer: 'The repo is strongest on the frontend and architectural scaffolding. The backend has controllers, models, OpenAPI contracts, and compose wiring, but several services are still scaffold-level and not all backend pieces are fully wired into a complete runnable system.',
+    suggestions: ['Which services exist?', 'How do I run the app?', 'What APIs exist?']
+  },
+  {
+    id: 'api-docs',
+    keywords: ['api', 'openapi', 'swagger', 'endpoints', 'docs', 'spec'],
+    answer: 'API contracts live in api-specs/product-service-openapi.yaml and api-specs/cart-service-openapi.yaml. Additional architecture and risk analysis live in the docs folder.',
+    suggestions: ['Which endpoints are available?', 'Which services exist?', 'Is the backend fully runnable?']
+  },
+  {
+    id: 'api-routes',
+    keywords: ['routes', 'route list', 'endpoints available', 'product api', 'cart api', 'order api', 'payment api', 'auth api'],
+    answer: 'The main route groups are /api/v1/products, /api/v1/cart, /api/v1/orders, /api/v1/payments, and /api/v1/auth or /api/v1/users through the gateway.',
+    suggestions: ['Which services exist?', 'What ports are used?', 'How do I run the app?']
+  },
+  {
+    id: 'chatbot',
+    keywords: ['chatbot', 'assistant', 'how does the chatbot work', 'no api key', 'local assistant'],
+    answer: 'This chatbot runs inside the frontend itself. It does not call an external AI service or require an API key. It answers from built-in ShopNova knowledge plus your live page and cart state.',
+    suggestions: ['What can you answer?', "What's in my cart?", 'Which services exist?']
+  }
+];
+
+const CHAT_STATUS_ENDPOINT = '/api/chat/status';
+const CHAT_COMPLETION_ENDPOINT = '/api/chat';
+
+function normalizeAssistantText(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function tokenizeAssistantText(text) {
+  return normalizeAssistantText(text)
+    .split(' ')
+    .filter(Boolean)
+    .filter(token => !SHOP_ASSISTANT_STOP_WORDS.has(token));
+}
+
+function formatAssistantCurrency(value) {
+  return `₹${Number(value || 0).toFixed(2)}`;
+}
+
+function createAssistantWelcomeMessage() {
+  return {
+    id: 'assistant-welcome',
+    role: 'assistant',
+    text: "I'm the ShopNova Assistant. I can always answer from built-in ShopNova knowledge, and if the local server is started with your Gemini API key I can also use live AI replies about this application.",
+    suggestions: SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+  };
+}
+
+function scoreKnowledgeEntry(entry, normalizedQuestion, questionTokens) {
+  let score = 0;
+
+  for (const keyword of entry.keywords) {
+    const normalizedKeyword = normalizeAssistantText(keyword);
+    if (!normalizedKeyword) continue;
+
+    if (normalizedQuestion.includes(normalizedKeyword)) {
+      score += normalizedKeyword.includes(' ') ? 6 : 3;
+    }
+
+    for (const token of normalizedKeyword.split(' ')) {
+      if (questionTokens.has(token)) score += 1;
+    }
+  }
+
+  return score;
+}
+
+function findKnowledgeBaseReply(question) {
+  const normalizedQuestion = normalizeAssistantText(question);
+  const questionTokens = new Set(tokenizeAssistantText(question));
+  let bestEntry = null;
+  let bestScore = 0;
+
+  for (const entry of SHOP_ASSISTANT_KNOWLEDGE_BASE) {
+    const score = scoreKnowledgeEntry(entry, normalizedQuestion, questionTokens);
+    if (score > bestScore) {
+      bestEntry = entry;
+      bestScore = score;
+    }
+  }
+
+  if (!bestEntry || bestScore < 3) return null;
+
+  return {
+    text: bestEntry.answer,
+    suggestions: bestEntry.suggestions
+  };
+}
+
+function buildCatalogSummary() {
+  const categories = [...new Set(MOCK_PRODUCTS.map(product => product.category))];
+  return `The demo catalog currently includes ${MOCK_PRODUCTS.length} products across ${categories.join(', ')}. The Products page lets shoppers search, filter by category, and sort by name, price, or rating.`;
+}
+
+function buildCartSummary(cart) {
+  if (cart.itemCount === 0) {
+    return 'Your cart is empty right now. Add items from the Products page first, then the Cart page will show subtotal, shipping, coupons, and the path into checkout.';
+  }
+
+  const shipping = cart.subtotal >= 99 ? 0 : 9.99;
+  const tax = cart.subtotal * 0.08;
+  const estimatedTotal = cart.total + shipping + tax;
+  const discountText = cart.discount > 0
+    ? ` Discount (${cart.couponCode}): -₹${cart.discount.toFixed(2)}.`
+    : '';
+  const itemPreview = cart.items
+    .slice(0, 3)
+    .map(item => `${item.productName} x${item.quantity}`)
+    .join(', ');
+
+  return `You currently have ${cart.itemCount} item${cart.itemCount === 1 ? '' : 's'} in the cart. Subtotal: ${formatAssistantCurrency(cart.subtotal)}.${discountText} Shipping: ${shipping === 0 ? 'FREE' : formatAssistantCurrency(shipping)}. Estimated total with 8% tax: ${formatAssistantCurrency(estimatedTotal)}.${itemPreview ? ` Items: ${itemPreview}.` : ''}`;
+}
+
+function getNavigationReply(normalizedQuestion, context) {
+  const wantsNavigation = /(open|go to|take me to|navigate|switch to|bring me|show page)/.test(normalizedQuestion);
+  if (!wantsNavigation) return null;
+
+  if (/(products|catalog|home|store)/.test(normalizedQuestion)) {
+    return {
+      text: context.currentPage === 'products'
+        ? 'You are already on the Products page.'
+        : 'I opened the Products page for you.',
+      suggestions: ['How many products are in the demo?', 'How do search and filters work?', 'What does this app do?'],
+      actionPage: 'products'
+    };
+  }
+
+  if (/(cart|bag|basket)/.test(normalizedQuestion)) {
+    return {
+      text: context.currentPage === 'cart'
+        ? 'You are already on the Cart page.'
+        : 'I opened the Cart page for you.',
+      suggestions: ['What coupon codes work?', "What's in my cart?", 'How does checkout work?'],
+      actionPage: 'cart'
+    };
+  }
+
+  if (/checkout/.test(normalizedQuestion)) {
+    const emptyCartNote = context.cart.itemCount === 0
+      ? ' Your cart is empty right now, so the demo will ask you to add items before completing checkout.'
+      : '';
+
+    return {
+      text: `${context.currentPage === 'checkout' ? 'You are already on the Checkout page.' : 'I opened the Checkout page for you.'}${emptyCartNote}`,
+      suggestions: ['What payment methods are available?', "What's in my cart?", 'How does order confirmation work?'],
+      actionPage: 'checkout'
+    };
+  }
+
+  return null;
+}
+
+function resolveAssistantReply(question, context) {
+  const normalizedQuestion = normalizeAssistantText(question);
+
+  if (!normalizedQuestion) {
+    return {
+      text: 'Ask me something about ShopNova and I will answer from the app itself.',
+      suggestions: SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+    };
+  }
+
+  if (/api key|free key|token/.test(normalizedQuestion)) {
+    return {
+      text: 'This chatbot is configured to work without any external API key. It answers from built-in ShopNova knowledge plus live page and cart state. If you later want a cloud AI model, you can wire in your own provider key, but this version already works as-is.',
+      suggestions: ['How does the chatbot work?', 'Is the backend fully runnable?', 'Which services exist?']
+    };
+  }
+
+  if (/where am i|current page|which page/.test(normalizedQuestion)) {
+    const pageLabel = SHOP_ASSISTANT_PAGE_LABELS[context.currentPage] || 'Products';
+    return {
+      text: `You are currently on the ${pageLabel} page.`,
+      suggestions: ['Open cart', 'Open checkout', 'What does this page do?']
+    };
+  }
+
+  if (/(cart|bag|basket)/.test(normalizedQuestion) && /(what s in|what is in|how many|item|total|subtotal|shipping|discount|coupon|summary)/.test(normalizedQuestion)) {
+    return {
+      text: buildCartSummary(context.cart),
+      suggestions: ['What coupon codes work?', 'Open cart', 'How does checkout work?']
+    };
+  }
+
+  if (/coupon|discount|promo/.test(normalizedQuestion)) {
+    return {
+      text: 'The cart supports three demo coupon codes: SAVE10 for 10% off, SAVE20 for 20% off, and FLAT50 for up to ₹50 off. Apply them from the Cart page.',
+      suggestions: ['Open cart', "What's in my cart?", 'How does checkout work?']
+    };
+  }
+
+  if (/add to cart|quantity|remove item/.test(normalizedQuestion)) {
+    return {
+      text: 'Products can be added from the Products page with the Add to Cart button. The Cart page lets you increase or decrease quantity, remove items, and apply coupons before checkout.',
+      suggestions: ['Open products', 'Open cart', 'What coupon codes work?']
+    };
+  }
+
+  if (/payment|upi|credit card|debit card|net banking/.test(normalizedQuestion)) {
+    return {
+      text: 'The checkout page offers four demo payment options: Credit Card, Debit Card, UPI, and Net Banking. The payment path in this project is intentionally deterministic rather than AI-driven.',
+      suggestions: ['Open checkout', 'How does checkout work?', 'What does this app do?']
+    };
+  }
+
+  if (/checkout|place order|order confirmation|confirm order|shipping information|payment method/.test(normalizedQuestion)) {
+    return {
+      text: 'Checkout collects shipping details, validates the form, lets you choose a payment method, simulates processing, creates a demo order ID, and clears the cart after a successful order.',
+      suggestions: ['Open checkout', 'What payment methods are available?', "What's in my cart?"]
+    };
+  }
+
+  if (/categories|catalog|how many products|product count|products available/.test(normalizedQuestion)) {
+    return {
+      text: buildCatalogSummary(),
+      suggestions: ['Open products', 'How do search and filters work?', 'What does this app do?']
+    };
+  }
+
+  if (/(search|filter|sort)/.test(normalizedQuestion) && /(product|catalog|page)/.test(normalizedQuestion)) {
+    return {
+      text: 'The Products page includes a search box, a category filter, and sorting options for name, price low to high, price high to low, and rating.',
+      suggestions: ['Open products', 'How many products are in the demo?', 'What categories exist?']
+    };
+  }
+
+  if (/chatbot|assistant/.test(normalizedQuestion) && /(how|work|inside|built|can you do|what can you answer)/.test(normalizedQuestion)) {
+    return {
+      text: 'I am a built-in ShopNova assistant. I answer from the application knowledge bundled into the frontend plus your live cart and current page, so I can help without calling any outside AI service.',
+      suggestions: ['What can you answer?', 'Which services exist?', "What's in my cart?"]
+    };
+  }
+
+  const navigationReply = getNavigationReply(normalizedQuestion, context);
+  if (navigationReply) return navigationReply;
+
+  const knowledgeBaseReply = findKnowledgeBaseReply(question);
+  if (knowledgeBaseReply) return knowledgeBaseReply;
+
+  return {
+    text: 'I can answer questions about this ShopNova application: the storefront pages, service layout, ports, docs, coupons, payment methods, and your current cart or page state.',
+    suggestions: SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+  };
+}
+
+function createBuiltInAssistantStatus() {
+  return {
+    checked: true,
+    aiEnabled: false,
+    provider: 'builtin',
+    model: null
+  };
+}
+
+async function fetchAssistantProviderStatus() {
+  try {
+    const response = await fetch(CHAT_STATUS_ENDPOINT, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      checked: true,
+      aiEnabled: !!data.aiEnabled,
+      provider: data.provider || 'builtin',
+      model: data.model || null
+    };
+  } catch (error) {
+    return createBuiltInAssistantStatus();
+  }
+}
+
+function buildRemoteHistory(messages) {
+  return messages
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .slice(-6)
+    .map(message => ({ role: message.role, text: message.text }));
+}
+
+async function requestRemoteAssistantReply({ question, currentPage, cart, history }) {
+  const response = await fetch(CHAT_COMPLETION_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify({
+      question,
+      currentPage,
+      cart,
+      history
+    })
+  });
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const message = data?.error || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  if (!data?.answer) {
+    throw new Error('The AI provider returned an empty response.');
+  }
+
+  return data;
+}
+
+function ShopAssistant({ currentPage, onNavigate }) {
+  const { cart } = useCart();
+  const [isOpen, setIsOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [messages, setMessages] = useState(() => [createAssistantWelcomeMessage()]);
+  const [assistantStatus, setAssistantStatus] = useState({
+    checked: false,
+    aiEnabled: false,
+    provider: 'builtin',
+    model: null
+  });
+  const [isResponding, setIsResponding] = useState(false);
+  const messageIdRef = useRef(0);
+  const messagesEndRef = useRef(null);
+
+  const nextMessageId = () => {
+    messageIdRef.current += 1;
+    return `assistant-message-${messageIdRef.current}`;
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [isOpen, messages]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchAssistantProviderStatus().then(status => {
+      if (!cancelled) setAssistantStatus(status);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const submitQuestion = useCallback(async (question) => {
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || isResponding) return;
+
+    const reply = resolveAssistantReply(trimmedQuestion, { cart, currentPage });
+    const history = buildRemoteHistory(messages);
+
+    setMessages(prev => [
+      ...prev,
+      { id: nextMessageId(), role: 'user', text: trimmedQuestion }
+    ]);
+
+    setDraft('');
+    setIsOpen(true);
+
+    if (reply.actionPage && reply.actionPage !== currentPage) {
+      onNavigate(reply.actionPage);
+    }
+
+    if (!assistantStatus.aiEnabled) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: nextMessageId(),
+          role: 'assistant',
+          text: reply.text,
+          suggestions: reply.suggestions || SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+        }
+      ]);
+      return;
+    }
+
+    setIsResponding(true);
+
+    try {
+      const remote = await requestRemoteAssistantReply({
+        question: trimmedQuestion,
+        currentPage,
+        cart,
+        history
+      });
+
+      setMessages(prev => [
+        ...prev,
+        {
+          id: nextMessageId(),
+          role: 'assistant',
+          text: remote.answer,
+          suggestions: reply.suggestions || SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+        }
+      ]);
+    } catch (error) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: nextMessageId(),
+          role: 'assistant',
+          text: `${reply.text}\n\nI couldn't reach Gemini just now, so I switched to the built-in ShopNova answer.`,
+          suggestions: reply.suggestions || SHOP_ASSISTANT_DEFAULT_SUGGESTIONS
+        }
+      ]);
+    } finally {
+      setIsResponding(false);
+    }
+  }, [assistantStatus.aiEnabled, cart, currentPage, isResponding, messages, onNavigate]);
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    submitQuestion(draft);
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      submitQuestion(draft);
+    }
+  };
+
+  const handleReset = () => {
+    setMessages([createAssistantWelcomeMessage()]);
+    setDraft('');
+  };
+
+  const assistantStatusLabel = !assistantStatus.checked
+    ? 'Checking AI connection...'
+    : assistantStatus.aiEnabled
+      ? `Gemini live via ${assistantStatus.model || 'configured model'}`
+      : 'Built-in answers only';
+
+  return (
+    <>
+      {isOpen && (
+        <section className="assistant-panel" role="dialog" aria-modal="false"
+                 aria-labelledby="shop-assistant-title" id="shop-assistant-panel">
+          <div className="assistant-panel__header">
+            <div>
+              <p className="assistant-panel__eyebrow">Built-in help</p>
+              <h2 className="assistant-panel__title" id="shop-assistant-title">ShopNova Assistant</h2>
+              <p className="assistant-panel__status">{assistantStatusLabel}</p>
+            </div>
+            <div className="assistant-panel__actions">
+              <button className="assistant-icon-button" type="button"
+                      onClick={handleReset} aria-label="Reset assistant conversation">
+                ↺
+              </button>
+              <button className="assistant-icon-button" type="button"
+                      onClick={() => setIsOpen(false)} aria-label="Close assistant">
+                ×
+              </button>
+            </div>
+          </div>
+          <div className="assistant-panel__body">
+            <div className="assistant-messages" role="log" aria-live="polite"
+                 aria-label="Assistant conversation">
+              {messages.map(message => (
+                <article key={message.id} className={`assistant-message assistant-message--${message.role}`}>
+                  {message.role === 'assistant' && (
+                    <p className="assistant-message__label">ShopNova Assistant</p>
+                  )}
+                  <p className="assistant-message__text">{message.text}</p>
+                  {message.role === 'assistant' && message.suggestions?.length > 0 && (
+                    <div className="assistant-message__suggestions">
+                      {message.suggestions.map(suggestion => (
+                        <button key={`${message.id}-${suggestion}`} type="button"
+                                className="assistant-chip"
+                                onClick={() => submitQuestion(suggestion)}>
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+            <form className="assistant-composer" onSubmit={handleSubmit}>
+              <label className="sr-only" htmlFor="shop-assistant-input">
+                Ask a question about this application
+              </label>
+              <textarea className="assistant-composer__input" id="shop-assistant-input"
+                        value={draft} onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={handleKeyDown} rows={3}
+                        placeholder="Ask about services, coupons, checkout, ports, or your current cart..." />
+              <div className="assistant-composer__footer">
+                <p className="assistant-composer__hint">
+                  {assistantStatus.aiEnabled
+                    ? 'Gemini is connected through the local proxy server.'
+                    : 'Using built-in app knowledge until a Gemini API key is configured in the local server.'}
+                </p>
+                <button className="btn btn--primary assistant-composer__send" type="submit" disabled={isResponding}>
+                  {isResponding ? 'Thinking...' : 'Send'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+      )}
+
+      <button className="assistant-launcher" type="button"
+              onClick={() => setIsOpen(prev => !prev)}
+              aria-expanded={isOpen} aria-controls="shop-assistant-panel"
+              id="shop-assistant-launcher">
+        <span className="assistant-launcher__icon" aria-hidden="true">💬</span>
+        <span className="assistant-launcher__text">{isOpen ? 'Hide Assistant' : 'Ask the App'}</span>
+      </button>
+    </>
+  );
+}
+
+// ================================================================
 // Component: Navigation
 // ================================================================
 function Navigation({ currentPage, onNavigate }) {
@@ -365,7 +948,7 @@ function ProductCard({ product, style }) {
 
   return (
     <article className="product-card" style={style}
-             role="article" aria-label={`${product.name}, $${product.price.toFixed(2)}`}
+             role="article" aria-label={`${product.name}, ₹${product.price.toFixed(2)}`}
              id={`product-${product.id}`}>
       <div className="product-card__image-wrapper">
         <img className="product-card__image" src={product.imageUrl}
@@ -384,7 +967,7 @@ function ProductCard({ product, style }) {
         </div>
         <div className="product-card__footer">
           <div className="product-card__price">
-            <span className="product-card__price-currency">$</span>
+            <span className="product-card__price-currency">₹</span>
             {product.price.toFixed(2)}
           </div>
           <button className="product-card__add-btn"
@@ -486,7 +1069,7 @@ function ProductListingPage() {
             Products You'll Love
           </h1>
           <p className="hero__description">
-            Curated collections from top brands. Free shipping on orders over $99.
+            Curated collections from top brands. Free shipping on orders over ₹99.
             Quality guaranteed with every purchase.
           </p>
           <div className="hero__actions">
@@ -603,7 +1186,7 @@ function CartPage({ onNavigate }) {
           {cart.items.map((item, i) => (
             <div key={item.productId} className="cart-item" role="listitem"
                  style={{ animationDelay: `${i * 100}ms` }}
-                 aria-label={`${item.productName}, quantity ${item.quantity}, $${item.lineTotal.toFixed(2)}`}>
+                 aria-label={`${item.productName}, quantity ${item.quantity}, ₹${item.lineTotal.toFixed(2)}`}>
               <img className="cart-item__image" src={item.imageUrl}
                    alt={item.productName} loading="lazy" />
               <div className="cart-item__info">
@@ -659,7 +1242,7 @@ function CartPage({ onNavigate }) {
           <div className="cart-summary__row">
             <span className="cart-summary__label">Shipping</span>
             <span className="cart-summary__value" style={{color: 'var(--color-accent-success)'}}>
-              {cart.subtotal >= 99 ? 'FREE' : '$9.99'}
+              {cart.subtotal >= 99 ? 'FREE' : '₹9.99'}
             </span>
           </div>
           <hr className="cart-summary__divider" />
@@ -914,7 +1497,7 @@ function CheckoutPage({ onNavigate }) {
           <div className="cart-summary__row">
             <span className="cart-summary__label">Shipping</span>
             <span className="cart-summary__value" style={{color: 'var(--color-accent-success)'}}>
-              {cart.subtotal >= 99 ? 'FREE' : '$9.99'}
+              {cart.subtotal >= 99 ? 'FREE' : '₹9.99'}
             </span>
           </div>
           <div className="cart-summary__row">
@@ -965,6 +1548,7 @@ function App() {
         <main id="main-content" role="main">
           {renderPage()}
         </main>
+        <ShopAssistant currentPage={currentPage} onNavigate={handleNavigate} />
       </ToastProvider>
     </CartProvider>
   );

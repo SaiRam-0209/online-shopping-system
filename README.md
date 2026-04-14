@@ -40,6 +40,23 @@ Just open:
 `frontend/index.html`
 directly in your web browser.
 
+### 4. Run the Frontend With The AI Chat Proxy
+
+To use the in-app chatbot with a real Gemini model without exposing your API key in the browser:
+
+```bash
+export GEMINI_API_KEY=your_gemini_api_key
+python3 dev_server.py --port 4174
+```
+
+Then open:
+`http://127.0.0.1:4174`
+
+Notes:
+* If `GEMINI_API_KEY` is set, the chatbot will use Gemini through the local proxy server.
+* If no key is set, the chatbot still works in built-in fallback mode using local ShopNova knowledge.
+* You can optionally override the model with `SHOPNOVA_GEMINI_MODEL`, for example `gemini-2.5-flash`.
+
 ## Default Ports
 - Frontend: N/A (runs in browser)
 - Product Service: 8081

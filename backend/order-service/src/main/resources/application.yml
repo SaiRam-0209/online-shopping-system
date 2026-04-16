@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: order-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/order_db}
+    username: ${SPRING_DATASOURCE_USERNAME:shop_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:shop_password}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+server:
+  port: 8083
+
+cart-service:
+  url: ${CART_SERVICE_URL:http://localhost:8082}
+product-service:
+  url: ${PRODUCT_SERVICE_URL:http://localhost:8081}
+payment-service:
+  url: ${PAYMENT_SERVICE_URL:http://localhost:8084}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

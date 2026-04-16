@@ -178,6 +178,9 @@ img {
   position: relative;
   cursor: pointer;
   transition: color var(--transition-fast);
+  background: transparent;
+  border: none;
+  font-family: inherit;
 }
 
 .nav__link::after {

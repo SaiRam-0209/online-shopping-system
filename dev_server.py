@@ -18,7 +18,7 @@ from urllib import error, request
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 DEFAULT_PORT = int(os.getenv("SHOPNOVA_PORT", "4174"))
-DEFAULT_MODEL = os.getenv("SHOPNOVA_GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.getenv("SHOPNOVA_GEMINI_MODEL", "gemini-2.0-flash")
 
 STOP_WORDS = {
     "a",
@@ -494,11 +494,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    server = ShopNovaHTTPServer(("127.0.0.1", args.port), ShopNovaHandler)
+    port = args.port
+    server = None
+    while server is None:
+        try:
+            server = ShopNovaHTTPServer(("127.0.0.1", port), ShopNovaHandler)
+        except OSError as exc:
+            if exc.errno == 48:  # Address already in use
+                print(f"Port {port} is in use, trying {port + 1}...")
+                port += 1
+            else:
+                raise
+
     api_key = get_api_key()
     model = os.getenv("SHOPNOVA_GEMINI_MODEL", DEFAULT_MODEL)
 
-    print(f"ShopNova server running at http://127.0.0.1:{args.port}")
+    print(f"ShopNova server running at http://127.0.0.1:{port}")
     if api_key:
         print(f"Gemini AI is enabled with model: {model}")
     else:
